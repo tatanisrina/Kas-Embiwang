@@ -516,7 +516,7 @@
             </div>
 
             <div class="qr-container">
-                <img src="Qris.jpeg" alt="QRIS Code" style="max-width: 220px; height: auto; border-radius: 10px; margin: 0 auto 20px; display: block;">
+                <img src="D:/Downloads/Qris.jpeg" alt="QRIS Code" style="max-width: 220px; height: auto; border-radius: 10px; margin: 0 auto 20px; display: block;">
                 <p>Scan QR Code di atas atau transfer ke:<br>
                 <strong>BNI 1855875609<br>
                 a/n Tata Nisrina Firdausi</strong></p>
@@ -580,9 +580,13 @@
         </div>
     </div>
 
+    <!-- Supabase Helper -->
+    <script type="module" src="supabase_helper.js"></script>
+
     <script>
-        let dataKas = JSON.parse(localStorage.getItem('dataKas')) || [];
+        let dataKas = [];
         let siswaData = [];
+        let supabaseReady = false;
 
         // Daftar Siswa
         const studentNames = [
@@ -651,8 +655,8 @@
             }
         }
 
-        function simpanData() {
-            const minggu = document.getElementById('minggu').value;
+        async function simpanData() {
+            const minggu = parseInt(document.getElementById('minggu').value);
             const jumlah = parseInt(document.getElementById('jumlah').value);
             const tanggal = document.getElementById('tanggal').value || new Date().toISOString().split('T')[0];
             const keterangan = document.getElementById('keterangan').value;
@@ -677,22 +681,47 @@
                 return;
             }
 
-            const newData = {
-                id: Date.now(),
-                minggu: parseInt(minggu),
-                jumlah: jumlah,
-                tanggal: tanggal,
-                absen: absen,
-                keterangan: keterangan,
-                bukti: bukti ? URL.createObjectURL(bukti) : null,
-                createdAt: new Date().toLocaleDateString('id-ID')
-            };
+            // Show loading
+            const btn = document.querySelector('.btn');
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ Menyimpan...';
+            btn.disabled = true;
 
-            dataKas.push(newData);
-            localStorage.setItem('dataKas', JSON.stringify(dataKas));
-            
-            alert('✅ Data kas berhasil disimpan!\n\nSiswa yang hadir minggu ' + minggu + ' otomatis ditandai sebagai sudah bayar.');
-            resetForm();
+            try {
+                // Save to Supabase
+                console.log('📤 Sending data to Supabase...');
+                const result = await KasAPI.tambahKas(
+                    tanggal,
+                    keterangan,
+                    'masuk',
+                    jumlah,
+                    'Admin',
+                    absen
+                );
+
+                if (result.success) {
+                    // Add minggu field to the returned data
+                    const newData = {
+                        ...result.data,
+                        minggu: minggu,
+                        absen: absen
+                    };
+                    
+                    // Update local cache
+                    dataKas.push(newData);
+                    
+                    alert('✅ Data kas berhasil disimpan!\n\nSiswa yang hadir minggu ' + minggu + ' otomatis ditandai sebagai sudah bayar.');
+                    resetForm();
+                } else {
+                    alert('❌ Gagal menyimpan: ' + result.message);
+                }
+            } catch (error) {
+                console.error('❌ Error:', error);
+                alert('❌ Terjadi kesalahan: ' + error.message);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
         }
 
         function resetForm() {
@@ -704,7 +733,9 @@
             generateAbsen(); // Reset checkboxes
         }
 
-        function renderChecklist() {
+        async function renderChecklist() {
+            console.log('📊 Loading checklist from Supabase...');
+            
             const table = document.querySelector('.payment-table');
             const thead = table.querySelector('thead tr');
             const tbody = document.getElementById('paymentTableBody');
@@ -722,31 +753,79 @@
                 thead.appendChild(th);
             }
             
-            let tbody_html = '';
-            let totalPayments = 0;
-            let totalLuran = 0;
-            
-            // Create a map of payments from dataKas
-            // Structure: {siswa: {week: {data}}}
-            const paymentMap = {};
-            for (let i = 1; i <= 30; i++) {
-                paymentMap[i] = {};
-            }
-            
-            // Populate paymentMap from dataKas
-            dataKas.forEach(data => {
-                data.absen.forEach(siswa => {
-                    paymentMap[siswa][data.minggu] = {
-                        minggu: data.minggu,
-                        tanggal: data.tanggal,
-                        jumlah: data.jumlah,
-                        keterangan: data.keterangan,
-                        createdAt: data.createdAt
-                    };
-                    totalPayments++;
-                    totalLuran += data.jumlah;
+            try {
+                // Fetch data from Supabase
+                const result = await KasAPI.getKas('masuk');
+                const supabaseData = result.data || [];
+                
+                console.log('📊 Fetched', supabaseData.length, 'entries from Supabase');
+                dataKas = supabaseData;
+
+                let tbody_html = '';
+                let totalPayments = 0;
+                let totalLuran = 0;
+                
+                // Create a map of payments from dataKas
+                // Structure: {siswa: {week: {data}}}
+                const paymentMap = {};
+                for (let i = 1; i <= 30; i++) {
+                    paymentMap[i] = {};
+                }
+                
+                // Populate paymentMap from dataKas
+                dataKas.forEach(data => {
+                    const absen = data.absen || [];
+                    const minggu = data.minggu || 1; // Use minggu field if available, otherwise default to 1
+                    absen.forEach(siswa => {
+                        paymentMap[siswa][minggu] = {
+                            minggu: minggu,
+                            tanggal: data.tanggal,
+                            jumlah: data.jumlah,
+                            keterangan: data.keterangan,
+                            createdAt: data.dibuat_tanggal
+                        };
+                        totalPayments++;
+                        totalLuran += data.jumlah;
+                    });
                 });
-            });
+                
+                // Generate rows for each student
+                for (let siswa = 1; siswa <= 30; siswa++) {
+                    let row_html = `<tr><td class="student-name-cell">${studentNames[siswa-1]}</td>`;
+                    
+                    // Generate cells for each week
+                    for (let week = 1; week <= 52; week++) {
+                        const paid = paymentMap[siswa][week];
+                        const cellClass = paid ? 'payment-cell paid' : 'payment-cell unpaid';
+                        const cellText = paid ? '✓' : '-';
+                        
+                        if (paid) {
+                            row_html += `<td class="${cellClass}" onclick="showPaymentDetail(${siswa}, ${week})" title="Klik untuk lihat detail pembayaran">${cellText}</td>`;
+                        } else {
+                            row_html += `<td class="${cellClass}" title="Belum ada pembayaran">${cellText}</td>`;
+                        }
+                    }
+                    
+                    row_html += '</tr>';
+                    tbody_html += row_html;
+                }
+                
+                tbody.innerHTML = tbody_html;
+                
+                // Update statistics
+                const totalSlots = 30 * 52;
+                const percentage = totalPayments > 0 ? Math.round((totalPayments / totalSlots) * 100) : 0;
+                
+                document.getElementById('totalBayar').textContent = totalPayments;
+                document.getElementById('totalJumlah').textContent = formatRupiah(totalLuran);
+                document.getElementById('persentaseBayar').textContent = percentage + '%';
+                
+                console.log('✅ Checklist rendered successfully');
+            } catch (error) {
+                console.error('❌ Error fetching data:', error);
+                alert('❌ Gagal memuat data: ' + error.message);
+            }
+        }
             
             // Generate rows for each student
             for (let siswa = 1; siswa <= 30; siswa++) {
@@ -824,7 +903,31 @@
         // Initialize
         document.getElementById('tanggal').value = new Date().toISOString().split('T')[0];
         generateAbsen();
-        renderChecklist();
+        
+        // Load data from Supabase when page is ready
+        window.addEventListener('load', async () => {
+            console.log('🔄 Loading initial data from Supabase...');
+            try {
+                // Wait a moment for Supabase to initialize
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                if (typeof KasAPI !== 'undefined') {
+                    console.log('✅ Supabase API is ready');
+                    await renderChecklist();
+                    
+                    // Subscribe to real-time updates
+                    console.log('📡 Subscribing to real-time updates...');
+                    KasAPI.subscribeToKas((payload) => {
+                        console.log('📡 Real-time update received:', payload.eventType);
+                        renderChecklist(); // Refresh when data changes
+                    });
+                } else {
+                    console.error('❌ Supabase API not loaded');
+                }
+            } catch (error) {
+                console.error('❌ Error during initialization:', error);
+            }
+        });
     </script>
 </body>
 </html>
