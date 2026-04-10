@@ -516,7 +516,7 @@
             </div>
 
             <div class="qr-container">
-                <img src="D:/Downloads/Qris.jpeg" alt="QRIS Code" style="max-width: 220px; height: auto; border-radius: 10px; margin: 0 auto 20px; display: block;">
+                <img src="Qris.jpeg" alt="QRIS Code" style="max-width: 220px; height: auto; border-radius: 10px; margin: 0 auto 20px; display: block;">
                 <p>Scan QR Code di atas atau transfer ke:<br>
                 <strong>BNI 1855875609<br>
                 a/n Tata Nisrina Firdausi</strong></p>
